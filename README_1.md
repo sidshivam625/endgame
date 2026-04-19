@@ -96,16 +96,32 @@ L_G = L_adv_G  +  λ_cls · L_cls_fake  +  λ_rec · L_rec
 - **CelebA** dataset: `kaggle datasets download -d jessicali9530/celeba-dataset`
 - Expected structure:
   ```
-  /kaggle/input/celeba-dataset/
+  /kaggle/input/datasets/jessicali9530/celeba-dataset/
       img_align_celeba/img_align_celeba/*.jpg
       list_attr_celeba.csv
   ```
 
 ### Dataset mode used in this project
 - On Kaggle, this project reads directly from mounted dataset storage:
-  - `/kaggle/input/celeba-dataset/...`
+  - `/kaggle/input/datasets/jessicali9530/celeba-dataset/...`
+  - (fallback) `/kaggle/input/celeba-dataset/...`
 - It does **not** stream samples over network during training.
 - If paths are missing, dataloader creation now fails early with a clear error.
+
+### Path handling when using this repo from GitHub on Kaggle
+- All file paths are centralized in `config.py`.
+- Auto-detection logic now does this:
+  - `celeba_root`: `STARGAN_CELEBA_ROOT` (if set) → else `/kaggle/input/datasets/jessicali9530/celeba-dataset` (if present) → else `/kaggle/input/celeba-dataset` (if present) → else `./data/celeba-dataset`
+  - `work_root`: `STARGAN_WORK_ROOT` (if set) → else `/kaggle/working` (if present) → else `./runs`
+- Checkpoints and samples are created under:
+  - `<work_root>/checkpoints`
+  - `<work_root>/samples`
+
+Optional environment overrides:
+```bash
+export STARGAN_CELEBA_ROOT=/kaggle/input/datasets/jessicali9530/celeba-dataset
+export STARGAN_WORK_ROOT=/kaggle/working
+```
 
 ### If running outside Kaggle
 Download once, then train from local disk:

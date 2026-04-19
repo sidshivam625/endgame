@@ -10,9 +10,35 @@ import os
 import torch
 
 
+def _default_celeba_root() -> str:
+    """Pick a sensible dataset root for Kaggle or local runs."""
+    env_root = os.getenv("STARGAN_CELEBA_ROOT")
+    if env_root:
+        return env_root
+    kaggle_candidates = [
+        "/kaggle/input/datasets/jessicali9530/celeba-dataset",
+        "/kaggle/input/celeba-dataset",
+    ]
+    for kaggle_root in kaggle_candidates:
+        if os.path.isdir(kaggle_root):
+            return kaggle_root
+    return "./data/celeba-dataset"
+
+
+def _default_work_root() -> str:
+    """Pick output root for checkpoints/samples."""
+    env_root = os.getenv("STARGAN_WORK_ROOT")
+    if env_root:
+        return env_root
+    kaggle_work = "/kaggle/working"
+    if os.path.isdir(kaggle_work):
+        return kaggle_work
+    return "./runs"
+
+
 class Config:
     # ── Dataset ───────────────────────────────────────────────────────────────
-    celeba_root  = "/kaggle/input/celeba-dataset"
+    celeba_root  = _default_celeba_root()
     attr_path    = os.path.join(celeba_root, "list_attr_celeba.csv")
     image_dir    = os.path.join(
                        celeba_root,
@@ -89,8 +115,9 @@ class Config:
     cudnn_benchmark = True
     non_blocking_transfer = True
 
-    save_dir     = "/kaggle/working/checkpoints"
-    sample_dir   = "/kaggle/working/samples"
+    work_root    = _default_work_root()
+    save_dir     = os.path.join(work_root, "checkpoints")
+    sample_dir   = os.path.join(work_root, "samples")
 
     log_step     = 50           # print loss every N D-steps
     sample_step  = 500          # save sample grid every N D-steps
