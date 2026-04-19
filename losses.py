@@ -216,7 +216,7 @@ def gradient_penalty(
         create_graph = True,
         retain_graph = True,
     )[0]
-    grad_norm = grad.view(B, -1).norm(2, dim=1)           # (B,)
+    grad_norm = grad.reshape(B, -1).norm(2, dim=1)        # (B,)
     return ((grad_norm - 1.0) ** 2).mean()
 
 
