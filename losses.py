@@ -67,10 +67,10 @@ class FaceNetIdentityLoss(nn.Module):
         # FaceNet expects images in ~[0, 1] float, normalised per channel
         # We store the constants and do the conversion in forward()
         self.register_buffer(
-            "mean", torch.tensor([0.5, 0.5, 0.5]).view(1, 3, 1, 1)
+            "mean", torch.tensor([0.5, 0.5, 0.5], device=self.device).view(1, 3, 1, 1)
         )
         self.register_buffer(
-            "std",  torch.tensor([0.5, 0.5, 0.5]).view(1, 3, 1, 1)
+            "std",  torch.tensor([0.5, 0.5, 0.5], device=self.device).view(1, 3, 1, 1)
         )
 
     def _preprocess(self, x: torch.Tensor) -> torch.Tensor:
@@ -154,15 +154,15 @@ class VGGPerceptualLoss(nn.Module):
         for p in self.parameters():
             p.requires_grad_(False)
 
-        self.to(self.device)
-
         # ImageNet normalisation (VGG input space)
         self.register_buffer(
-            "mean", torch.tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1)
+            "mean", torch.tensor([0.485, 0.456, 0.406], device=self.device).view(1, 3, 1, 1)
         )
         self.register_buffer(
-            "std",  torch.tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1)
+            "std",  torch.tensor([0.229, 0.224, 0.225], device=self.device).view(1, 3, 1, 1)
         )
+
+        self.to(self.device)
 
     def _preprocess(self, x: torch.Tensor) -> torch.Tensor:
         """[-1, 1] → ImageNet-normalised [~-2, ~2]."""

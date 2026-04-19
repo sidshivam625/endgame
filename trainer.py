@@ -8,7 +8,7 @@ import random
 
 import torch
 import torch.optim as optim
-from torch.cuda.amp import GradScaler, autocast
+from torch import amp
 import torchvision.utils as vutils
 from tqdm.auto import tqdm
 
@@ -167,8 +167,10 @@ class Trainer:
 
         self.opt_G = optim.Adam(self.G.parameters(), lr=cfg.lr_g, betas=(cfg.beta1, cfg.beta2))
         self.opt_D = optim.Adam(self.D.parameters(), lr=cfg.lr_d, betas=(cfg.beta1, cfg.beta2))
-        self.scaler_G = GradScaler(enabled=cfg.use_amp)
-        self.scaler_D = GradScaler(enabled=cfg.use_amp)
+        self.amp_enabled = cfg.use_amp and cfg.device.type == "cuda"
+        self.amp_device_type = "cuda" if cfg.device.type == "cuda" else "cpu"
+        self.scaler_G = amp.GradScaler("cuda", enabled=self.amp_enabled)
+        self.scaler_D = amp.GradScaler("cuda", enabled=self.amp_enabled)
 
         self.train_loader, self.val_loader, self.test_loader = build_dataloaders(cfg)
         steps_per_epoch = len(self.train_loader)
@@ -194,6 +196,9 @@ class Trainer:
         if self.cfg.use_channels_last and x.ndim == 4:
             x = x.contiguous(memory_format=torch.channels_last)
         return x
+
+    def _autocast(self):
+        return amp.autocast(device_type=self.amp_device_type, enabled=self.amp_enabled)
 
     def _init_wandb(self):
         cfg = self.cfg
@@ -258,7 +263,7 @@ class Trainer:
     def _step_D(self, x_blur, x_clean, attr_src, attr_trg) -> dict:
         cfg = self.cfg
         self.opt_D.zero_grad(set_to_none=True)
-        with autocast(enabled=cfg.use_amp):
+        with self._autocast():
             src_real, cls_real = self.D(x_clean)
             with torch.no_grad():
                 x_fake = self.G(x_blur, attr_trg)
@@ -281,7 +286,7 @@ class Trainer:
     def _step_G(self, x_blur, x_clean, attr_src, attr_trg) -> dict:
         cfg = self.cfg
         self.opt_G.zero_grad(set_to_none=True)
-        with autocast(enabled=cfg.use_amp):
+        with self._autocast():
             x_fake = self.G(x_blur, attr_trg)
             x_rec = self.G(x_fake, attr_src)
             src_fake, cls_fake = self.D(x_fake)
@@ -336,7 +341,7 @@ class Trainer:
                 attr_src = batch["attr"].to(cfg.device, non_blocking=cfg.non_blocking_transfer)
                 attr_trg = self._random_target_attr(attr_src, cfg.n_attrs)
 
-                with autocast(enabled=cfg.use_amp):
+                with self._autocast():
                     x_fake = self.G(x_blur, attr_trg)
                     x_rec = self.G(x_fake, attr_src)
                     l_rec = cycle_loss(x_rec, x_blur)
