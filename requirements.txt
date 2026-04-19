@@ -1,0 +1,7 @@
+torch
+torchvision
+facenet-pytorch
+wandb
+pandas
+numpy
+Pillow
