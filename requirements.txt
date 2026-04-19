@@ -5,3 +5,4 @@ wandb
 pandas
 numpy
 Pillow
+tqdm

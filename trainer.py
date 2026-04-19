@@ -10,6 +10,7 @@ import torch
 import torch.optim as optim
 from torch.cuda.amp import GradScaler, autocast
 import torchvision.utils as vutils
+from tqdm.auto import tqdm
 
 from config import Config
 from models import Generator, Discriminator, count_params
@@ -36,6 +37,18 @@ def set_seed(seed: int):
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+
+def configure_runtime(cfg: Config):
+    """Enable safe performance features for NVIDIA GPUs (Kaggle friendly)."""
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = cfg.cudnn_benchmark
+        torch.backends.cuda.matmul.allow_tf32 = cfg.enable_tf32
+        torch.backends.cudnn.allow_tf32 = cfg.enable_tf32
+        try:
+            torch.set_float32_matmul_precision("high")
+        except Exception:
+            pass
 
 
 def denorm(x: torch.Tensor) -> torch.Tensor:
@@ -117,6 +130,7 @@ class Trainer:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         set_seed(cfg.seed)
+        configure_runtime(cfg)
 
         os.makedirs(cfg.save_dir, exist_ok=True)
         os.makedirs(cfg.sample_dir, exist_ok=True)
@@ -133,6 +147,9 @@ class Trainer:
             conv_dim=cfg.d_conv_dim,
             repeat_num=cfg.d_repeat_num,
         ).to(cfg.device)
+        if cfg.use_channels_last:
+            self.G = self.G.to(memory_format=torch.channels_last)
+            self.D = self.D.to(memory_format=torch.channels_last)
         count_params(self.G, "Generator")
         count_params(self.D, "Discriminator")
 
@@ -171,6 +188,12 @@ class Trainer:
             self._load_checkpoint(cfg.resume_ckpt)
 
         self.wandb_run = self._init_wandb()
+
+    def _to_device(self, x: torch.Tensor) -> torch.Tensor:
+        x = x.to(self.cfg.device, non_blocking=self.cfg.non_blocking_transfer)
+        if self.cfg.use_channels_last and x.ndim == 4:
+            x = x.contiguous(memory_format=torch.channels_last)
+        return x
 
     def _init_wandb(self):
         cfg = self.cfg
@@ -300,13 +323,17 @@ class Trainer:
         ssim_sum = 0.0
         n_batches = 0
 
+        iterator = loader
+        if cfg.use_tqdm:
+            iterator = tqdm(loader, desc=f"Eval-{split}", leave=False)
+
         with torch.no_grad():
-            for batch_idx, batch in enumerate(loader):
+            for batch_idx, batch in enumerate(iterator):
                 if max_batches is not None and batch_idx >= max_batches:
                     break
-                x_blur = batch["blurred"].to(cfg.device)
-                x_clean = batch["clean"].to(cfg.device)
-                attr_src = batch["attr"].to(cfg.device)
+                x_blur = self._to_device(batch["blurred"])
+                x_clean = self._to_device(batch["clean"])
+                attr_src = batch["attr"].to(cfg.device, non_blocking=cfg.non_blocking_transfer)
                 attr_trg = self._random_target_attr(attr_src, cfg.n_attrs)
 
                 with autocast(enabled=cfg.use_amp):
@@ -368,9 +395,9 @@ class Trainer:
         print(f"\n[overfit] running tiny-batch sanity check: samples={n_samples}, steps={n_steps}")
 
         fixed_batch = next(iter(self.train_loader))
-        x_blur = fixed_batch["blurred"][:n_samples].to(cfg.device)
-        x_clean = fixed_batch["clean"][:n_samples].to(cfg.device)
-        attr_src = fixed_batch["attr"][:n_samples].to(cfg.device)
+        x_blur = self._to_device(fixed_batch["blurred"][:n_samples])
+        x_clean = self._to_device(fixed_batch["clean"][:n_samples])
+        attr_src = fixed_batch["attr"][:n_samples].to(cfg.device, non_blocking=cfg.non_blocking_transfer)
         attr_trg = self._random_target_attr(attr_src, cfg.n_attrs)
 
         self.G.train()
@@ -394,7 +421,10 @@ class Trainer:
         )
 
         t0 = time.time()
-        for step in range(1, n_steps + 1):
+        step_iter = range(1, n_steps + 1)
+        if cfg.use_tqdm:
+            step_iter = tqdm(step_iter, desc="Overfit", leave=False)
+        for step in step_iter:
             log_D = self._step_D(x_blur, x_clean, attr_src, attr_trg)
             log_G = self._step_G(x_blur, x_clean, attr_src, attr_trg)
 
@@ -415,6 +445,8 @@ class Trainer:
                     f"| PERC {perc_now:.4f} "
                     f"| PSNR {psnr_now:.3f}"
                 )
+                if cfg.use_tqdm:
+                    step_iter.set_postfix({"rec": f"{rec_now:.4f}", "psnr": f"{psnr_now:.2f}"})
 
             self._log_wandb(
                 {
@@ -486,14 +518,18 @@ class Trainer:
         t0 = time.time()
 
         fixed_batch = next(iter(self.val_loader))
-        fx_blur = fixed_batch["blurred"].to(cfg.device)
-        fx_clean = fixed_batch["clean"].to(cfg.device)
+        fx_blur = self._to_device(fixed_batch["blurred"])
+        fx_clean = self._to_device(fixed_batch["clean"])
 
         for epoch in range(self.start_epoch, cfg.num_epochs):
-            for batch in self.train_loader:
-                x_blur = batch["blurred"].to(cfg.device)
-                x_clean = batch["clean"].to(cfg.device)
-                attr_src = batch["attr"].to(cfg.device)
+            epoch_loader = self.train_loader
+            if cfg.use_tqdm:
+                epoch_loader = tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{cfg.num_epochs}", leave=False)
+
+            for batch in epoch_loader:
+                x_blur = self._to_device(batch["blurred"])
+                x_clean = self._to_device(batch["clean"])
+                attr_src = batch["attr"].to(cfg.device, non_blocking=cfg.non_blocking_transfer)
                 attr_trg = self._random_target_attr(attr_src, cfg.n_attrs)
 
                 log_D = self._step_D(x_blur, x_clean, attr_src, attr_trg)
@@ -514,6 +550,12 @@ class Trainer:
                         "train/epoch": epoch + 1,
                     }
                     self._log_wandb(train_payload, step=d_step_idx)
+                    if cfg.use_tqdm:
+                        epoch_loader.set_postfix({
+                            "D": f"{log_D['D/tot']:.3f}",
+                            "G": f"{log_G['G/tot']:.3f}",
+                            "id": f"{log_G['G/id']:.3f}",
+                        })
 
                     if d_step_idx % cfg.log_step == 0:
                         elapsed = (time.time() - t0) / 60.0

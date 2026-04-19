@@ -20,6 +20,7 @@ class Config:
                        "img_align_celeba",
                    )
     image_size   = 128          # training resolution (H = W)
+    dataset_mode = "mounted"    # "mounted" (Kaggle input) or "local"
     # 5 binary CelebA attributes used for conditioning
     selected_attrs = ["Black_Hair", "Blond_Hair", "Brown_Hair", "Male", "Young"]
     n_attrs      = len(selected_attrs)
@@ -78,6 +79,15 @@ class Config:
     use_amp      = True         # automatic mixed precision (fp16)
     num_workers  = 4
     pin_memory   = True
+    persistent_workers = True
+    prefetch_factor    = 2
+
+    # Runtime/GPU efficiency toggles (safe defaults for Kaggle T4/P100)
+    use_tqdm      = True
+    use_channels_last = True
+    enable_tf32   = True
+    cudnn_benchmark = True
+    non_blocking_transfer = True
 
     save_dir     = "/kaggle/working/checkpoints"
     sample_dir   = "/kaggle/working/samples"

@@ -142,6 +142,18 @@ class CelebABlurDataset(Dataset):
 def build_dataloaders(cfg) -> tuple[DataLoader, DataLoader, DataLoader]:
     """Build train, val, and test DataLoaders from a Config object."""
 
+    if not os.path.isdir(cfg.image_dir):
+        raise FileNotFoundError(
+            f"Image directory not found: {cfg.image_dir}\n"
+            "Kaggle recommended flow: attach dataset 'jessicali9530/celeba-dataset'\n"
+            "Expected mount root: /kaggle/input/celeba-dataset"
+        )
+    if not os.path.isfile(cfg.attr_path):
+        raise FileNotFoundError(
+            f"Attribute file not found: {cfg.attr_path}\n"
+            "Expected file: /kaggle/input/celeba-dataset/list_attr_celeba.csv"
+        )
+
     common = dict(
         image_dir     = cfg.image_dir,
         attr_path     = cfg.attr_path,
@@ -156,6 +168,11 @@ def build_dataloaders(cfg) -> tuple[DataLoader, DataLoader, DataLoader]:
     val_ds   = CelebABlurDataset(**common, split="val",   augment=False)
     test_ds  = CelebABlurDataset(**common, split="test",  augment=False)
 
+    loader_kwargs = {}
+    if cfg.num_workers > 0:
+        loader_kwargs["persistent_workers"] = cfg.persistent_workers
+        loader_kwargs["prefetch_factor"] = cfg.prefetch_factor
+
     train_loader = DataLoader(
         train_ds,
         batch_size  = cfg.batch_size,
@@ -163,6 +180,7 @@ def build_dataloaders(cfg) -> tuple[DataLoader, DataLoader, DataLoader]:
         num_workers = cfg.num_workers,
         pin_memory  = cfg.pin_memory,
         drop_last   = True,
+        **loader_kwargs,
     )
     val_loader = DataLoader(
         val_ds,
@@ -171,6 +189,7 @@ def build_dataloaders(cfg) -> tuple[DataLoader, DataLoader, DataLoader]:
         num_workers = cfg.num_workers,
         pin_memory  = cfg.pin_memory,
         drop_last   = False,
+        **loader_kwargs,
     )
     test_loader = DataLoader(
         test_ds,
@@ -179,6 +198,7 @@ def build_dataloaders(cfg) -> tuple[DataLoader, DataLoader, DataLoader]:
         num_workers = cfg.num_workers,
         pin_memory  = cfg.pin_memory,
         drop_last   = False,
+        **loader_kwargs,
     )
 
     print(f"[Dataset] Train: {len(train_ds):,} | Val: {len(val_ds):,} | Test: {len(test_ds):,}")

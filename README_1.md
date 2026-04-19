@@ -101,6 +101,20 @@ L_G = L_adv_G  +  λ_cls · L_cls_fake  +  λ_rec · L_rec
       list_attr_celeba.csv
   ```
 
+### Dataset mode used in this project
+- On Kaggle, this project reads directly from mounted dataset storage:
+  - `/kaggle/input/celeba-dataset/...`
+- It does **not** stream samples over network during training.
+- If paths are missing, dataloader creation now fails early with a clear error.
+
+### If running outside Kaggle
+Download once, then train from local disk:
+```bash
+kaggle datasets download -d jessicali9530/celeba-dataset
+unzip celeba-dataset.zip -d /path/to/celeba-dataset
+```
+Then point `celeba_root` in `config.py` to that local folder.
+
 ### 2. Install dependencies
 ```bash
 pip install -r requirements.txt
@@ -128,6 +142,18 @@ python test.py --checkpoint-dir /kaggle/working/checkpoints --last-k 5
   - training: `D/*`, `G/*`, learning rate
   - validation: `val/psnr`, `val/ssim`, `val/id`, `val/perc`, `val/rec`
   - test: `test/psnr`, `test/ssim`, `test/id`, `test/perc`, `test/rec`
+
+### Progress bars
+- Training, validation/test evaluation, and overfit sanity mode all use `tqdm` progress bars.
+- You can disable bars by setting `use_tqdm = False` in `config.py`.
+
+### Kaggle GPU efficiency features enabled
+- AMP mixed precision (`use_amp = True`)
+- cuDNN benchmark autotuning (`cudnn_benchmark = True`)
+- TF32 matmul on supported GPUs (`enable_tf32 = True`)
+- Channels-last tensor format for conv nets (`use_channels_last = True`)
+- Optimized dataloading (`pin_memory`, `persistent_workers`, `prefetch_factor`)
+- Non-blocking host→GPU copies (`non_blocking_transfer = True`)
 
 ### 6. Tiny overfit sanity test (recommended before full training)
 Run a quick memorization test on a fixed tiny batch:
