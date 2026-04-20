@@ -81,7 +81,8 @@ class Config:
     # Run validation at the end of every N epochs.
     val_every_epochs = 1
     # Cap number of batches for quick metric passes (None = full loader).
-    val_max_batches  = 120
+    # 400 batches × bs=16 = 6 400 val images — meaningful statistics.
+    val_max_batches  = 400
     test_max_batches = 200
 
     # ── Loss weights ──────────────────────────────────────────────────────────
@@ -124,6 +125,20 @@ class Config:
     save_step    = 2000         # checkpoint every N D-steps
 
     resume_ckpt  = None         # path to checkpoint to resume from (or None)
+
+    # ── GAN Evaluation Metrics ────────────────────────────────────────────────
+    # Requires:  pip install 'torchmetrics[image]'
+    # FID  (Fréchet Inception Distance)  ↓ better — compares InceptionV3 feature distributions
+    # IS   (Inception Score)             ↑ better — quality + diversity of generated images
+    # KID  (Kernel Inception Distance)   ↓ better — unbiased FID alternative, stable on small N
+    # LPIPS(Learned Perceptual Patch Sim)↓ better — AlexNet feature distance, perceptual quality
+    fid_every_epochs = 5            # compute FID/IS/KID every N epochs (expensive)
+    fid_max_batches  = 400          # batches per FID run (400×16=6 400 imgs — stable estimate)
+
+    # ── torch.compile (PyTorch 2.x) ───────────────────────────────────────────
+    # Adds ~15–25 % throughput boost with reduce-overhead mode.
+    # Set True if you are on PyTorch ≥ 2.0 and can tolerate a ~3 min compile warm-up.
+    use_compile = False
 
     # ── Weights & Biases ─────────────────────────────────────────────────────
     use_wandb     = True

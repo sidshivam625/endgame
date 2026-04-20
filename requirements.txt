@@ -2,7 +2,10 @@ torch
 torchvision
 facenet-pytorch
 wandb
+lpips
+scipy
 pandas
 numpy
 Pillow
 tqdm
+torchmetrics[image]>=1.0

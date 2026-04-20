@@ -23,7 +23,7 @@ import sys
 
 def install_deps():
     subprocess.check_call(
-        [sys.executable, "-m", "pip", "install", "facenet-pytorch", "wandb", "--quiet"]
+        [sys.executable, "-m", "pip", "install", "facenet-pytorch", "wandb", "lpips", "torchmetrics[image]", "--quiet"]
     )
 
 
@@ -65,8 +65,10 @@ def main():
     elif args.mode == "test":
         if not args.checkpoint:
             raise ValueError("--checkpoint is required when --mode test")
+        # resume_ckpt in config handles loading the state
         trainer.evaluate_test_checkpoint(args.checkpoint)
     else:
+        # Overfit mode
         trainer.overfit_sanity(
             n_samples=args.overfit_samples,
             n_steps=args.overfit_steps,

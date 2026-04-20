@@ -139,7 +139,7 @@ class CelebABlurDataset(Dataset):
 
 # ── Factory function ──────────────────────────────────────────────────────────
 
-def build_dataloaders(cfg) -> tuple[DataLoader, DataLoader, DataLoader]:
+def build_dataloaders(cfg, worker_init_fn=None, generator=None) -> tuple[DataLoader, DataLoader, DataLoader]:
     """Build train, val, and test DataLoaders from a Config object."""
 
     if not os.path.isdir(cfg.image_dir):
@@ -175,11 +175,13 @@ def build_dataloaders(cfg) -> tuple[DataLoader, DataLoader, DataLoader]:
 
     train_loader = DataLoader(
         train_ds,
-        batch_size  = cfg.batch_size,
-        shuffle     = True,
-        num_workers = cfg.num_workers,
-        pin_memory  = cfg.pin_memory,
-        drop_last   = True,
+        batch_size       = cfg.batch_size,
+        shuffle          = True,
+        num_workers      = cfg.num_workers,
+        pin_memory       = cfg.pin_memory,
+        drop_last        = True,
+        worker_init_fn   = worker_init_fn,   # per-worker RNG seed (reproducibility)
+        generator        = generator,        # controls shuffle order determinism
         **loader_kwargs,
     )
     val_loader = DataLoader(
