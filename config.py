@@ -47,8 +47,16 @@ class Config:
                    )
     image_size   = 128          # training resolution (H = W)
     dataset_mode = "mounted"    # "mounted" (Kaggle input) or "local"
-    # 5 binary CelebA attributes used for conditioning
-    selected_attrs = ["Black_Hair", "Blond_Hair", "Brown_Hair", "Male", "Young"]
+    # Conditioning attributes used by generator/discriminator.
+    # Includes facial-expression/appearance attributes and excludes Brown_Hair/Young.
+    selected_attrs = [
+        "Black_Hair",
+        "Blond_Hair",
+        "Male",
+        "Smiling",
+        "Mouth_Slightly_Open",
+        "Narrow_Eyes",  # used as a practical proxy for 'disgust-like' expression
+    ]
     n_attrs      = len(selected_attrs)
 
     # ── Blur augmentation  (degraded input simulation) ────────────────────────
@@ -71,6 +79,7 @@ class Config:
     n_critic     = 5            # discriminator updates per generator update
     lr_g         = 1e-4
     lr_d         = 1e-4
+    min_lr       = 1e-6         # LR floor to avoid premature zero-learning regime
     beta1        = 0.5
     beta2        = 0.999
 
@@ -131,8 +140,9 @@ class Config:
     # Sample cadence: generate exactly this many sample grids each epoch
     sample_times_per_epoch = 5
     sample_step  = 500          # legacy fallback cadence (kept for compatibility)
-    # Show the latest sample grid live in notebook environments when a sample is saved.
-    live_preview  = True
+    # Keep inline preview off by default to avoid notebook IOPub message overflow.
+    # Samples are still saved to disk and logged to W&B.
+    live_preview  = False
     save_step    = 2000         # checkpoint every N D-steps
 
     resume_ckpt  = None         # path to checkpoint to resume from (or None)

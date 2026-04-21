@@ -159,15 +159,15 @@ from trainer import Trainer
 
 cfg = Config()
 cfg.use_wandb = False
-cfg.live_preview = True
+cfg.live_preview = False
 trainer = Trainer(cfg)
 trainer.overfit_sanity(n_samples=8, n_steps=300)
 
-### Cell 8 – Train with live sample previews
+### Cell 8 – Train (save + W&B log samples, no inline preview)
 from trainer import Trainer
 
 cfg = Config()
-cfg.live_preview = True
+cfg.live_preview = False
 cfg.use_wandb = True
 cfg.wandb_mode = "online"
 trainer = Trainer(cfg)

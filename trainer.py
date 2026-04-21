@@ -201,11 +201,12 @@ def linear_lr_decay(
     total_steps: int,
     decay_start: int,
     base_lr: float,
+    min_lr: float = 0.0,
 ):
     """Linear LR decay from base_lr → 0 over [decay_start, total_steps]."""
     if current_step >= decay_start:
         ratio = (current_step - decay_start) / max(total_steps - decay_start, 1)
-        new_lr = max(base_lr * (1.0 - ratio), 0.0)
+        new_lr = max(base_lr * (1.0 - ratio), min_lr)
         for g in optimizer.param_groups:
             g["lr"] = new_lr
 
@@ -285,12 +286,24 @@ class Trainer:
         self.total_d_steps = max((steps_per_epoch * cfg.num_epochs) // cfg.n_critic, 1)
         self.decay_start   = int(self.total_d_steps * cfg.lr_decay_start_ratio)
 
-        # Fixed target attributes for qualitative sample grids
+        # Attribute-group indices for safe target sampling and visualization presets.
+        self.hair_attr_indices = [
+            i for i, name in enumerate(cfg.selected_attrs) if "Hair" in name
+        ]
+
+        # Fixed target attributes for qualitative sample grids built from names.
+        def _preset(enabled_names):
+            vec = [0.0] * cfg.n_attrs
+            for idx, name in enumerate(cfg.selected_attrs):
+                if name in enabled_names:
+                    vec[idx] = 1.0
+            return vec
+
         self.fixed_attrs = [
-            [1, 0, 0, 0, 1],   # Black hair · Young
-            [0, 1, 0, 0, 1],   # Blond hair · Young
-            [0, 0, 1, 1, 1],   # Brown hair · Male · Young
-            [1, 0, 0, 1, 0],   # Black hair · Male
+            _preset(["Black_Hair", "Smiling"]),
+            _preset(["Blond_Hair", "Smiling"]),
+            _preset(["Black_Hair", "Male", "Mouth_Slightly_Open"]),
+            _preset(["Black_Hair", "Narrow_Eyes"]),
         ]
 
         # ── State ─────────────────────────────────────────────────────────────
@@ -392,20 +405,22 @@ class Trainer:
 
     # ── Attribute sampling ────────────────────────────────────────────────────
 
-    @staticmethod
-    def _random_target_attr(attr_src: torch.Tensor, n_attrs: int) -> torch.Tensor:
+    def _random_target_attr(self, attr_src: torch.Tensor) -> torch.Tensor:
         """Flip one random attribute per sample; enforce single-hot hair constraint."""
         attr_trg = attr_src.clone()
         B = attr_trg.size(0)
+        n_attrs = attr_trg.size(1)
         for i in range(B):
             flip_idx = random.randint(0, n_attrs - 1)
             attr_trg[i, flip_idx] = 1.0 - attr_trg[i, flip_idx]
-            # Hair attributes are at indices 0-2 → enforce at most one active
-            hair = attr_trg[i, :3]
-            if hair.sum() > 1:
-                keep = hair.argmax().item()
-                attr_trg[i, :3] = 0.0
-                attr_trg[i, keep] = 1.0
+            # Enforce at most one active hair color among configured hair attributes.
+            if len(self.hair_attr_indices) > 1:
+                hair_vals = attr_trg[i, self.hair_attr_indices]
+                if hair_vals.sum() > 1:
+                    keep_local = hair_vals.argmax().item()
+                    for h_idx in self.hair_attr_indices:
+                        attr_trg[i, h_idx] = 0.0
+                    attr_trg[i, self.hair_attr_indices[keep_local]] = 1.0
         return attr_trg
 
     # ── Train steps ───────────────────────────────────────────────────────────
@@ -498,7 +513,7 @@ class Trainer:
                 x_blur   = self._to_device(batch["blurred"])
                 x_clean  = self._to_device(batch["clean"])
                 attr_src = batch["attr"].to(cfg.device, non_blocking=cfg.non_blocking_transfer)
-                attr_trg = self._random_target_attr(attr_src, cfg.n_attrs)
+                attr_trg = self._random_target_attr(attr_src)
 
                 with self._autocast():
                     x_fake = self.G(x_blur, attr_trg)
@@ -590,7 +605,7 @@ class Trainer:
                 x_blur   = self._to_device(batch["blurred"])
                 x_clean  = self._to_device(batch["clean"])
                 attr_src = batch["attr"].to(cfg.device, non_blocking=cfg.non_blocking_transfer)
-                attr_trg = self._random_target_attr(attr_src, cfg.n_attrs)
+                attr_trg = self._random_target_attr(attr_src)
 
                 with self._autocast():
                     x_fake = self.G(x_blur, attr_trg)
@@ -721,7 +736,7 @@ class Trainer:
         x_clean  = self._to_device(batch["clean"][:n_show])
         x_blur   = self._to_device(batch["blurred"][:n_show])
         attr_src = batch["attr"][:n_show].to(self.cfg.device, non_blocking=self.cfg.non_blocking_transfer)
-        attr_trg = self._random_target_attr(attr_src, self.cfg.n_attrs)
+        attr_trg = self._random_target_attr(attr_src)
 
         with torch.no_grad():
             with self._autocast():
@@ -750,7 +765,7 @@ class Trainer:
         x_blur   = self._to_device(fixed_batch["blurred"][:n_samples])
         x_clean  = self._to_device(fixed_batch["clean"][:n_samples])
         attr_src = fixed_batch["attr"][:n_samples].to(cfg.device, non_blocking=cfg.non_blocking_transfer)
-        attr_trg = self._random_target_attr(attr_src, cfg.n_attrs)
+        attr_trg = self._random_target_attr(attr_src)
 
         self.G.train()
         self.D.train()
@@ -854,6 +869,7 @@ class Trainer:
         print(f"{'='*65}\n")
 
         d_step_idx  = self.global_step
+        g_step_idx  = self.global_step // max(cfg.n_critic, 1)
         t0          = time.time()
 
         fixed_batch = next(iter(self.val_loader))
@@ -887,7 +903,7 @@ class Trainer:
                 x_blur   = self._to_device(batch["blurred"])
                 x_clean  = self._to_device(batch["clean"])
                 attr_src = batch["attr"].to(cfg.device, non_blocking=cfg.non_blocking_transfer)
-                attr_trg = self._random_target_attr(attr_src, cfg.n_attrs)
+                attr_trg = self._random_target_attr(attr_src)
 
                 log_D = self._step_D(x_blur, x_clean, attr_src, attr_trg)
                 self.global_step += 1
@@ -896,8 +912,23 @@ class Trainer:
                 if self.global_step % cfg.n_critic == 0:
                     log_G = self._step_G(x_blur, x_clean, attr_src, attr_trg)
 
-                    linear_lr_decay(self.opt_G, d_step_idx, self.total_d_steps, self.decay_start, cfg.lr_g)
-                    linear_lr_decay(self.opt_D, d_step_idx, self.total_d_steps, self.decay_start, cfg.lr_d)
+                    g_step_idx += 1
+                    linear_lr_decay(
+                        self.opt_G,
+                        g_step_idx,
+                        self.total_d_steps,
+                        self.decay_start,
+                        cfg.lr_g,
+                        min_lr=getattr(cfg, "min_lr", 0.0),
+                    )
+                    linear_lr_decay(
+                        self.opt_D,
+                        g_step_idx,
+                        self.total_d_steps,
+                        self.decay_start,
+                        cfg.lr_d,
+                        min_lr=getattr(cfg, "min_lr", 0.0),
+                    )
                     lr = self.opt_G.param_groups[0]["lr"]
 
                     if d_step_idx % max(getattr(cfg, "wandb_log_every_steps", cfg.log_step), 1) == 0:
