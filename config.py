@@ -53,9 +53,9 @@ class Config:
 
     # ── Blur augmentation  (degraded input simulation) ────────────────────────
     # Applied on-the-fly in the DataLoader; sigma is sampled uniformly in range
-    blur_kernel  = 4           # Gaussian kernel size (must be odd)
-    blur_sigma_lo = 1.5         # lower bound of random sigma (slight blur)
-    blur_sigma_hi = 3.0         # upper bound of random sigma (slight blur)
+    blur_kernel  = 0          # Gaussian kernel size (must be odd)
+    blur_sigma_lo = 0       # lower bound of random sigma (slight blur)
+    blur_sigma_hi = 0       # upper bound of random sigma (slight blur)
 
     # ── Generator ─────────────────────────────────────────────────────────────
     g_conv_dim   = 64           # base channel width
