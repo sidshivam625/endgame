@@ -66,7 +66,7 @@ class Config:
     d_repeat_num = 6            # strided-conv downsampling steps
 
     # ── Training schedule ─────────────────────────────────────────────────────
-    batch_size   = 16
+    batch_size   = 32
     num_epochs   = 30
     n_critic     = 5            # discriminator updates per generator update
     lr_g         = 1e-4
@@ -92,6 +92,10 @@ class Config:
     lambda_id    = 5.0          # contrastive identity (FaceNet embedding)
     lambda_perc  = 0.5          # perceptual (VGG feature matching)
     lambda_gp    = 10.0         # WGAN gradient penalty
+
+    # Identity-loss warmup: reduces early over-constraint on attribute changes.
+    lambda_id_start_ratio = 0.3   # start at 30% of lambda_id
+    lambda_id_warmup_epochs = 5   # linearly ramp to full lambda_id
 
     # ── FaceNet / Identity branch ─────────────────────────────────────────────
     # InceptionResnetV1 pretrained on VGGFace2 (facenet-pytorch)
@@ -120,8 +124,13 @@ class Config:
     save_dir     = os.path.join(work_root, "checkpoints")
     sample_dir   = os.path.join(work_root, "samples")
 
-    log_step     = 50           # print loss every N D-steps
-    sample_step  = 500          # save sample grid every N D-steps
+    # Training logging cadence (reduced console/W&B spam)
+    log_step     = 2000         # print train losses every N D-steps
+    wandb_log_every_steps = 2000  # log train losses/LR to W&B every N D-steps
+
+    # Sample cadence: generate exactly this many sample grids each epoch
+    sample_times_per_epoch = 5
+    sample_step  = 500          # legacy fallback cadence (kept for compatibility)
     # Show the latest sample grid live in notebook environments when a sample is saved.
     live_preview  = True
     save_step    = 2000         # checkpoint every N D-steps
@@ -134,8 +143,12 @@ class Config:
     # IS   (Inception Score)             ↑ better — quality + diversity of generated images
     # KID  (Kernel Inception Distance)   ↓ better — unbiased FID alternative, stable on small N
     # LPIPS(Learned Perceptual Patch Sim)↓ better — AlexNet feature distance, perceptual quality
-    fid_every_epochs = 5            # compute FID/IS/KID every N epochs (expensive)
-    fid_max_batches  = 400          # batches per FID run (400×16=6 400 imgs — stable estimate)
+    # Epoch-end GAN metric cadence (speed-friendly, still complete)
+    gan_metrics_per_epoch = 0       # disable quarter-epoch GAN metric runs
+    fid_every_epochs = 1            # compute FID/IS/KID at end of every epoch
+    fid_max_batches  = 400          # full epoch-end/test batches for stable estimate
+    quarter_val_max_batches = 64    # kept for optional mid-epoch use
+    quarter_fid_max_batches = 64    # kept for optional mid-epoch use
 
     # ── torch.compile (PyTorch 2.x) ───────────────────────────────────────────
     # Adds ~15–25 % throughput boost with reduce-overhead mode.

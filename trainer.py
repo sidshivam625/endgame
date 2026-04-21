@@ -281,6 +281,7 @@ class Trainer:
             cfg, worker_init_fn=seed_worker, generator=_g
         )
         steps_per_epoch   = len(self.train_loader)
+        self.steps_per_epoch = steps_per_epoch
         self.total_d_steps = max((steps_per_epoch * cfg.num_epochs) // cfg.n_critic, 1)
         self.decay_start   = int(self.total_d_steps * cfg.lr_decay_start_ratio)
 
@@ -294,6 +295,7 @@ class Trainer:
 
         # ── State ─────────────────────────────────────────────────────────────
         self.start_epoch    = 0
+        self.current_epoch  = 0
         self.global_step    = 0
         self.best_val_psnr  = -float("inf")   # track best PSNR checkpoint
         self.best_val_fid   =  float("inf")   # track best FID  checkpoint
@@ -314,6 +316,16 @@ class Trainer:
 
     def _autocast(self):
         return amp.autocast(device_type=self.amp_device_type, enabled=self.amp_enabled)
+
+    def _lambda_id_effective(self) -> float:
+        cfg = self.cfg
+        warmup_epochs = max(int(getattr(cfg, "lambda_id_warmup_epochs", 0)), 0)
+        if warmup_epochs <= 0:
+            return float(cfg.lambda_id)
+        start_ratio = float(getattr(cfg, "lambda_id_start_ratio", 1.0))
+        start_ratio = max(0.0, min(start_ratio, 1.0))
+        progress = min(max(self.current_epoch, 0) / max(warmup_epochs, 1), 1.0)
+        return float(cfg.lambda_id) * (start_ratio + (1.0 - start_ratio) * progress)
 
     # ── W&B ───────────────────────────────────────────────────────────────────
 
@@ -424,6 +436,7 @@ class Trainer:
     def _step_G(self, x_blur, x_clean, attr_src, attr_trg) -> dict:
         cfg = self.cfg
         self.opt_G.zero_grad(set_to_none=True)
+        lambda_id_eff = self._lambda_id_effective()
         with self._autocast():
             x_fake = self.G(x_blur, attr_trg)
             x_rec  = self.G(x_fake, attr_src)    # cycle back to source attribute
@@ -438,7 +451,7 @@ class Trainer:
                 cfg.lambda_adv  * l_adv
                 + cfg.lambda_cls  * l_cls
                 + cfg.lambda_rec  * l_rec
-                + cfg.lambda_id   * l_id
+                + lambda_id_eff   * l_id
                 + cfg.lambda_perc * l_perc
             )
 
@@ -450,6 +463,7 @@ class Trainer:
             "G/cls":  float(l_cls.item()),
             "G/rec":  float(l_rec.item()),
             "G/id":   float(l_id.item()),
+            "G/id_w": float(lambda_id_eff),
             "G/perc": float(l_perc.item()),
             "G/tot":  float(l_G.item()),
         }
@@ -817,11 +831,26 @@ class Trainer:
         cfg        = self.cfg
         fid_every  = getattr(cfg, "fid_every_epochs", 5)
         fid_batches = getattr(cfg, "fid_max_batches", 400)
+        quarter_val_batches = getattr(cfg, "quarter_val_max_batches", min(cfg.val_max_batches, 120))
+        quarter_fid_batches = getattr(cfg, "quarter_fid_max_batches", min(fid_batches, 120))
 
         print(f"\n{'='*65}")
         print(f" StarGAN + Contrastive Identity  |  {cfg.num_epochs} epochs")
         print(f" Device: {cfg.device}  |  AMP: {cfg.use_amp}  |  compile: {getattr(cfg,'use_compile',False)}")
-        print(f" GAN metrics (FID/IS/KID) every {fid_every} epochs  |  {fid_batches} batches each")
+        print(
+            f" Train logs every {cfg.wandb_log_every_steps} steps | "
+            f"samples {cfg.sample_times_per_epoch}x per epoch"
+        )
+        if getattr(cfg, "gan_metrics_per_epoch", 0) > 0:
+            print(
+                f" GAN metrics every quarter epoch ({getattr(cfg, 'gan_metrics_per_epoch', 0)}x/epoch) "
+                f"| quarter batches={quarter_fid_batches} | full batches={fid_batches}"
+            )
+        else:
+            print(
+                f" GAN metrics at epoch end every {fid_every} epoch(s) "
+                f"| full batches={fid_batches}"
+            )
         print(f"{'='*65}\n")
 
         d_step_idx  = self.global_step
@@ -832,12 +861,29 @@ class Trainer:
         fx_clean    = self._to_device(fixed_batch["clean"])
 
         for epoch in range(self.start_epoch, cfg.num_epochs):
+            self.current_epoch = epoch + 1
+            steps_per_epoch = len(self.train_loader)
+            sample_times = max(int(getattr(cfg, "sample_times_per_epoch", 5)), 1)
+            sample_points = sorted({
+                max(1, min(steps_per_epoch, round((i + 1) * steps_per_epoch / sample_times)))
+                for i in range(sample_times)
+            })
+
+            gan_times = max(int(getattr(cfg, "gan_metrics_per_epoch", 0)), 0)
+            gan_points = sorted({
+                max(1, min(steps_per_epoch, round((i + 1) * steps_per_epoch / gan_times)))
+                for i in range(gan_times)
+            }) if gan_times > 0 else []
+
+            sample_idx = 0
+            gan_idx = 0
+
             epoch_loader = (
                 tqdm(self.train_loader, desc=f"Epoch {epoch+1}/{cfg.num_epochs}", leave=False)
                 if cfg.use_tqdm else self.train_loader
             )
 
-            for batch in epoch_loader:
+            for batch_idx, batch in enumerate(epoch_loader):
                 x_blur   = self._to_device(batch["blurred"])
                 x_clean  = self._to_device(batch["clean"])
                 attr_src = batch["attr"].to(cfg.device, non_blocking=cfg.non_blocking_transfer)
@@ -854,7 +900,11 @@ class Trainer:
                     linear_lr_decay(self.opt_D, d_step_idx, self.total_d_steps, self.decay_start, cfg.lr_d)
                     lr = self.opt_G.param_groups[0]["lr"]
 
-                    self._log_wandb({**log_D, **log_G, "train/lr": lr, "train/epoch": epoch + 1}, step=d_step_idx)
+                    if d_step_idx % max(getattr(cfg, "wandb_log_every_steps", cfg.log_step), 1) == 0:
+                        self._log_wandb(
+                            {**log_D, **log_G, "train/lr": lr, "train/epoch": epoch + 1},
+                            step=d_step_idx,
+                        )
                     if cfg.use_tqdm:
                         epoch_loader.set_postfix({
                             "D":  f"{log_D['D/tot']:.3f}",
@@ -871,17 +921,66 @@ class Trainer:
                             f"| rec {log_G['G/rec']:.4f} | lr {lr:.2e} | {elapsed:.1f} min"
                         )
 
-                    if d_step_idx % cfg.sample_step == 0:
-                        sp = os.path.join(cfg.sample_dir, f"step_{d_step_idx:06d}.png")
-                        grid = save_sample_grid(self.G, fx_blur, fx_clean, self.fixed_attrs, sp, cfg.device)
-                        print(f"  [sample] → {sp}")
-                        if getattr(cfg, "live_preview", False):
-                            show_latest_sample(sp)
-                        if self.wandb_run is not None:
-                            self._log_wandb({"samples/grid": wandb.Image(grid)}, step=d_step_idx)
-
                     if d_step_idx % cfg.save_step == 0:
                         self._save_checkpoint(f"step{d_step_idx:06d}")
+
+                progress_step = batch_idx + 1
+
+                # Exactly N sample dumps per epoch (default N=5)
+                if sample_idx < len(sample_points) and progress_step >= sample_points[sample_idx]:
+                    sp = os.path.join(cfg.sample_dir, f"ep{epoch+1:02d}_q{sample_idx+1}_step_{d_step_idx:06d}.png")
+                    grid = save_sample_grid(self.G, fx_blur, fx_clean, self.fixed_attrs, sp, cfg.device)
+                    print(f"  [sample] ep={epoch+1:02d} part={sample_idx+1}/{len(sample_points)} → {sp}")
+                    if getattr(cfg, "live_preview", False):
+                        show_latest_sample(sp)
+                    if self.wandb_run is not None:
+                        self._log_wandb({"samples/grid": wandb.Image(grid)}, step=d_step_idx)
+                    sample_idx += 1
+
+                # Quarter-epoch validation + GAN metrics
+                if gan_idx < len(gan_points) and progress_step >= gan_points[gan_idx]:
+                    epoch_frac = progress_step / max(steps_per_epoch, 1)
+                    print(
+                        f"[val-quarter] ep {epoch+1:02d} part {gan_idx+1}/{len(gan_points)} "
+                        f"({epoch_frac:.2%})"
+                    )
+                    val_q = self.evaluate_loader(
+                        self.val_loader,
+                        split="val",
+                        max_batches=quarter_val_batches,
+                    )
+                    gan_q = self.compute_gan_metrics(
+                        self.val_loader,
+                        split="val",
+                        max_batches=quarter_fid_batches,
+                    )
+                    payload = {
+                        **val_q,
+                        **gan_q,
+                        "val/epoch": epoch + 1,
+                        "val/epoch_progress": epoch_frac,
+                    }
+                    self._log_wandb(payload, step=d_step_idx)
+
+                    if val_q.get("val/psnr", -float("inf")) > self.best_val_psnr:
+                        self.best_val_psnr = val_q["val/psnr"]
+                        bp = self._save_checkpoint("best_psnr")
+                        print(f"  ★ [best-psnr] PSNR={self.best_val_psnr:.3f} → {bp}")
+                        self._log_wandb({"best/val_psnr": self.best_val_psnr}, step=d_step_idx)
+
+                    if "val/fid" in gan_q and gan_q["val/fid"] < self.best_val_fid:
+                        self.best_val_fid = gan_q["val/fid"]
+                        bf = self._save_checkpoint("best_fid")
+                        print(f"  ★ [best-fid]  FID={self.best_val_fid:.2f} → {bf}")
+                        self._log_wandb({"best/val_fid": self.best_val_fid}, step=d_step_idx)
+
+                    if "val/lpips_gan" in gan_q and gan_q["val/lpips_gan"] < self.best_val_lpips:
+                        self.best_val_lpips = gan_q["val/lpips_gan"]
+                        bl = self._save_checkpoint("best_lpips")
+                        print(f"  ★ [best-lpips] LPIPS={self.best_val_lpips:.4f} → {bl}")
+                        self._log_wandb({"best/val_lpips": self.best_val_lpips}, step=d_step_idx)
+
+                    gan_idx += 1
 
             # ── End-of-epoch ────────────────────────────────────────────────
             self.start_epoch = epoch + 1
@@ -909,8 +1008,8 @@ class Trainer:
                     print(f"  ★ [best-psnr] PSNR={self.best_val_psnr:.3f} → {bp}")
                     self._log_wandb({"best/val_psnr": self.best_val_psnr}, step=d_step_idx)
 
-                # ── GAN distribution metrics (periodic) ─────────────────────
-                run_fid = (epoch + 1) % fid_every == 0 or (epoch + 1) == cfg.num_epochs
+                # ── GAN distribution metrics (legacy epoch cadence fallback) ─
+                run_fid = (gan_times <= 0) and ((epoch + 1) % fid_every == 0 or (epoch + 1) == cfg.num_epochs)
                 if run_fid:
                     print(f"[GAN metrics] Computing FID / IS / KID — epoch {epoch + 1}…")
                     gan_m = self.compute_gan_metrics(
