@@ -53,7 +53,7 @@ class Config:
 
     # ── Blur augmentation  (degraded input simulation) ────────────────────────
     # Applied on-the-fly in the DataLoader; sigma is sampled uniformly in range
-    blur_kernel  = 11           # Gaussian kernel size (must be odd)
+    blur_kernel  = 4           # Gaussian kernel size (must be odd)
     blur_sigma_lo = 1.5         # lower bound of random sigma (slight blur)
     blur_sigma_hi = 3.0         # upper bound of random sigma (slight blur)
 
