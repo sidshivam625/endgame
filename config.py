@@ -1,28 +1,26 @@
 """
 config.py  –  Central hyperparameter store.
-All paths assume the standard Kaggle CelebA dataset layout:
-  /kaggle/input/celeba-dataset/
-      img_align_celeba/img_align_celeba/  ← JPEG images
-      list_attr_celeba.csv                ← attribute labels
+Default dataset target is RAF-DB on Kaggle:
+    /kaggle/input/datasets/shuvoalok/raf-db-dataset/
 """
 
 import os
 import torch
 
 
-def _default_celeba_root() -> str:
-    """Pick a sensible dataset root for Kaggle or local runs."""
-    env_root = os.getenv("STARGAN_CELEBA_ROOT")
+def _default_data_root() -> str:
+    """Pick a sensible RAF-DB root for Kaggle or local runs."""
+    env_root = os.getenv("STARGAN_DATA_ROOT") or os.getenv("STARGAN_CELEBA_ROOT")
     if env_root:
         return env_root
     kaggle_candidates = [
-        "/kaggle/input/datasets/jessicali9530/celeba-dataset",
-        "/kaggle/input/celeba-dataset",
+        "/kaggle/input/datasets/shuvoalok/raf-db-dataset",
+        "/kaggle/input/raf-db-dataset",
     ]
-    for kaggle_root in kaggle_candidates:
-        if os.path.isdir(kaggle_root):
-            return kaggle_root
-    return "./data/celeba-dataset"
+    for root in kaggle_candidates:
+        if os.path.isdir(root):
+            return root
+    return "./data/raf-db-dataset"
 
 
 def _default_work_root() -> str:
@@ -38,32 +36,30 @@ def _default_work_root() -> str:
 
 class Config:
     # ── Dataset ───────────────────────────────────────────────────────────────
-    celeba_root  = _default_celeba_root()
-    attr_path    = os.path.join(celeba_root, "list_attr_celeba.csv")
-    image_dir    = os.path.join(
-                       celeba_root,
-                       "img_align_celeba",
-                       "img_align_celeba",
-                   )
-    image_size   = 128          # training resolution (H = W)
-    dataset_mode = "mounted"    # "mounted" (Kaggle input) or "local"
-    # Conditioning attributes used by generator/discriminator.
-    # Includes facial-expression/appearance attributes and excludes Brown_Hair/Young.
-    selected_attrs = [
-        "Black_Hair",
-        "Blond_Hair",
-        "Male",
-        "Smiling",
-        "Mouth_Slightly_Open",
-        "Narrow_Eyes",  # used as a practical proxy for 'disgust-like' expression
-    ]
-    n_attrs      = len(selected_attrs)
+    data_root    = _default_data_root()
+    # Backward-compatible alias used by existing helper scripts.
+    celeba_root  = data_root
 
-    # ── Blur augmentation  (degraded input simulation) ────────────────────────
-    # Applied on-the-fly in the DataLoader; sigma is sampled uniformly in range
-    blur_kernel  = 3     # Gaussian kernel size (must be odd)
-    blur_sigma_lo = 0.5      # lower bound of random sigma (slight blur)
-    blur_sigma_hi = 2       # upper bound of random sigma (slight blur)
+    # RAF-DB layout is auto-detected in dataset.py, these are best-effort defaults.
+    attr_path    = os.path.join(data_root, "EmoLabel", "list_patition_label.txt")
+    image_dir    = os.path.join(data_root, "Image", "aligned")
+    image_size   = 128          # training resolution (H = W)
+    dataset_name = "rafdb"
+    dataset_mode = "mounted"    # "mounted" (Kaggle input) or "local"
+
+    # RAF-DB basic expressions (1..7 in original annotations).
+    selected_attrs = [
+        "Surprise",
+        "Fear",
+        "Disgust",
+        "Happiness",
+        "Sadness",
+        "Anger",
+        "Neutral",
+    ]
+    attr_mode    = "multiclass"  # "multiclass" for RAF-DB, "multilabel" for CelebA-like data
+    n_attrs      = len(selected_attrs)
+    val_split_ratio = 0.1         # hold out a val split from RAF-DB train partition
 
     # ── Generator ─────────────────────────────────────────────────────────────
     g_conv_dim   = 64           # base channel width
@@ -167,7 +163,7 @@ class Config:
 
     # ── Weights & Biases ─────────────────────────────────────────────────────
     use_wandb     = True
-    wandb_project = "stargan-blur-upscale"
+    wandb_project = "stargan-rafdb"
     wandb_entity  = None        # set your username/team on Kaggle if needed
     wandb_run_name = None       # auto-generated when None
     wandb_mode    = "online"   # "online" or "offline"

@@ -12,8 +12,8 @@ Losses
 Identity Loss Design
 ─────────────────────
 Given:
-    x_blur   = blurred input
-    x_gen    = G(x_blur, target_attr)          generated face
+    x_in     = input image
+    x_gen    = G(x_in, target_attr)          generated face
     x_clean  = original sharp image (same identity)
 
 We compare:
@@ -233,12 +233,26 @@ def adv_g_loss(src_fake) -> torch.Tensor:
 # ─────────────────────────────── Attribute cls loss ───────────────────────────
 
 def cls_loss_real(cls_pred: torch.Tensor, attr_real: torch.Tensor) -> torch.Tensor:
-    """BCE on real images (D's auxiliary classifier)."""
+    """Attribute classification loss on real images.
+
+    Uses CE for one-hot multiclass targets (e.g., RAF-DB), else BCE for multilabel.
+    """
+    row_sums = attr_real.sum(dim=1)
+    is_onehot_multiclass = torch.allclose(row_sums, torch.ones_like(row_sums), atol=1e-4)
+    if is_onehot_multiclass:
+        return F.cross_entropy(cls_pred, attr_real.argmax(dim=1))
     return F.binary_cross_entropy_with_logits(cls_pred, attr_real)
 
 
 def cls_loss_fake(cls_pred: torch.Tensor, attr_target: torch.Tensor) -> torch.Tensor:
-    """BCE on generated images (G's classification objective)."""
+    """Attribute classification loss on generated images.
+
+    Uses CE for one-hot multiclass targets (e.g., RAF-DB), else BCE for multilabel.
+    """
+    row_sums = attr_target.sum(dim=1)
+    is_onehot_multiclass = torch.allclose(row_sums, torch.ones_like(row_sums), atol=1e-4)
+    if is_onehot_multiclass:
+        return F.cross_entropy(cls_pred, attr_target.argmax(dim=1))
     return F.binary_cross_entropy_with_logits(cls_pred, attr_target)
 
 

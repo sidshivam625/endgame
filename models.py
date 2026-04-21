@@ -3,7 +3,7 @@ models.py  –  Generator, Discriminator, and helper blocks.
 
 Generator  (StarGAN-style with pixel-shuffle sharpening)
 ──────────────────────────────────────────────────────────
-  Input : [blurred_img (3) | target_attr broadcast (n_attrs)] → (3+n, H, W)
+    Input : [image (3) | target_attr broadcast (n_attrs)] → (3+n, H, W)
   Encoder : 2× strided Conv  (H→H/4, channels expand)
   Bottleneck : N ResidualBlocks
   Decoder  : 2× PixelShuffle (H/4→H, sub-pixel for sharp reconstruction)
@@ -140,7 +140,7 @@ class Generator(nn.Module):
 
     def forward(self, x: torch.Tensor, attr: torch.Tensor) -> torch.Tensor:
         """
-        x    : (B, 3, H, W)      blurred input
+        x    : (B, 3, H, W)      input image
         attr : (B, n_attrs)      target attribute vector  ∈ {0, 1}
         """
         # Broadcast attr to spatial dims and concatenate channel-wise

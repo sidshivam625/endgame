@@ -1,5 +1,5 @@
 """
-Standalone test entrypoint for StarGAN blur-to-sharp model.
+Standalone test entrypoint for StarGAN expression translation model.
 
 Examples
 --------

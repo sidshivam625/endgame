@@ -2,12 +2,9 @@
 generate_visuals.py  –  Paper-quality visualisation grid from a saved checkpoint.
 
 Layout (one row per sample):
-  [Target GT] [Input Blur] [Reconst (src attr)] [Black Hair] [Blond Hair] [Brown Hair] [Male] [Young]
+    [Input image] [Recon (src attr)] [Target attr-1] [Target attr-2] ...
 
-Usage
------
-    python generate_visuals.py --checkpoint /kaggle/working/checkpoints/ckpt_best_psnr.pth
-    python generate_visuals.py --checkpoint /path/to/ckpt.pth --samples 8 --split test
+Supports both multilabel (CelebA-like) and multiclass (RAF-DB) targets.
 """
 
 import os
@@ -17,7 +14,6 @@ import torch
 import matplotlib
 matplotlib.use("Agg")   # non-interactive backend (safe inside Kaggle / SSH)
 import matplotlib.pyplot as plt
-from tqdm import tqdm
 
 from config import Config
 from dataset import build_dataloaders
@@ -43,10 +39,9 @@ def generate_paper_visuals(
     loader = {"train": train_loader, "val": val_loader, "test": test_loader}[split]
     batch  = next(iter(loader))
 
-    image_clean = batch["clean"]
-    image_blur  = batch["blurred"]
+    image_in    = batch["image"]
     label_org   = batch["attr"].to(device)
-    image_blur  = image_blur.to(device)
+    image_in    = image_in.to(device)
 
     # ── Load Generator ─────────────────────────────────────────────────────────
     G = Generator(
@@ -65,21 +60,29 @@ def generate_paper_visuals(
     attr_names = cfg.selected_attrs       # e.g. ["Black_Hair", "Blond_Hair", …]
 
     with torch.no_grad():
-        visuals_cpu = [image_clean, image_blur.cpu()]
+        visuals_cpu = [image_in.cpu()]
 
         # 1. Direct reconstruction (keep source attr, let model sharpen)
-        rec = G(image_blur, label_org)
+        rec = G(image_in, label_org)
         visuals_cpu.append(rec.cpu())
 
-        # 2. One-attribute flips
+        # 2. Target-attribute translations
         for i in range(cfg.n_attrs):
-            label_trg = label_org.clone()
-            label_trg[:, i] = 1.0 - label_trg[:, i]    # flip bit i
-            fake = G(image_blur, label_trg)
+            if getattr(cfg, "attr_mode", "multilabel") == "multiclass":
+                label_trg = torch.zeros_like(label_org)
+                label_trg[:, i] = 1.0
+            else:
+                label_trg = label_org.clone()
+                label_trg[:, i] = 1.0 - label_trg[:, i]    # flip bit i
+            fake = G(image_in, label_trg)
             visuals_cpu.append(fake.cpu())
 
     # ── Plot ──────────────────────────────────────────────────────────────────
-    col_labels = ["GT (clean)", "Input (blur)", "Recon (sharp)"] + [f"Flip: {n}" for n in attr_names]
+    if getattr(cfg, "attr_mode", "multilabel") == "multiclass":
+        attr_cols = [f"Target: {n}" for n in attr_names]
+    else:
+        attr_cols = [f"Flip: {n}" for n in attr_names]
+    col_labels = ["Input", "Recon"] + attr_cols
     n_cols = len(visuals_cpu)
     n_rows = num_samples
 

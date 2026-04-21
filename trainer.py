@@ -165,18 +165,18 @@ def _batch_ssim_global(x_fake: torch.Tensor, x_target: torch.Tensor, eps: float 
 
 def save_sample_grid(
     G: Generator,
-    x_blur: torch.Tensor,
+    x_in: torch.Tensor,
     x_clean: torch.Tensor,
     fixed_attrs: list,
     path: str,
     device: torch.device,
     n_show: int = 8,
 ) -> torch.Tensor:
-    """Save a visual grid: [blur | clean | trg_attr₁ | trg_attr₂ | ...]."""
+    """Save a visual grid: [input | target_ref | trg_attr₁ | trg_attr₂ | ...]."""
     was_training = G.training
     G.eval()
     with torch.no_grad():
-        x_b = x_blur[:n_show].to(device)
+        x_b = x_in[:n_show].to(device)
         x_c = x_clean[:n_show].to(device)
         imgs = [denorm(x_b), denorm(x_c)]
         for trg_attr in fixed_attrs:
@@ -299,12 +299,22 @@ class Trainer:
                     vec[idx] = 1.0
             return vec
 
-        self.fixed_attrs = [
-            _preset(["Black_Hair", "Smiling"]),
-            _preset(["Blond_Hair", "Smiling"]),
-            _preset(["Black_Hair", "Male", "Mouth_Slightly_Open"]),
-            _preset(["Black_Hair", "Narrow_Eyes"]),
-        ]
+        # Dataset-agnostic fixed targets:
+        # - multiclass: one-hot presets for first classes
+        # - multilabel: semantic presets by name where available
+        if getattr(cfg, "attr_mode", "multilabel") == "multiclass":
+            self.fixed_attrs = []
+            for cls_idx in range(min(4, cfg.n_attrs)):
+                vec = [0.0] * cfg.n_attrs
+                vec[cls_idx] = 1.0
+                self.fixed_attrs.append(vec)
+        else:
+            self.fixed_attrs = [
+                _preset(["Black_Hair", "Smiling"]),
+                _preset(["Blond_Hair", "Smiling"]),
+                _preset(["Black_Hair", "Male", "Mouth_Slightly_Open"]),
+                _preset(["Black_Hair", "Narrow_Eyes"]),
+            ]
 
         # ── State ─────────────────────────────────────────────────────────────
         self.start_epoch    = 0
@@ -407,6 +417,16 @@ class Trainer:
 
     def _random_target_attr(self, attr_src: torch.Tensor) -> torch.Tensor:
         """Flip one random attribute per sample; enforce single-hot hair constraint."""
+        if getattr(self.cfg, "attr_mode", "multilabel") == "multiclass":
+            B, n_attrs = attr_src.size()
+            attr_trg = torch.zeros_like(attr_src)
+            src_idx = attr_src.argmax(dim=1)
+            for i in range(B):
+                choices = [j for j in range(n_attrs) if j != int(src_idx[i].item())]
+                trg_idx = random.choice(choices) if choices else int(src_idx[i].item())
+                attr_trg[i, trg_idx] = 1.0
+            return attr_trg
+
         attr_trg = attr_src.clone()
         B = attr_trg.size(0)
         n_attrs = attr_trg.size(1)
@@ -425,13 +445,13 @@ class Trainer:
 
     # ── Train steps ───────────────────────────────────────────────────────────
 
-    def _step_D(self, x_blur, x_clean, attr_src, attr_trg) -> dict:
+    def _step_D(self, x_in, x_clean, attr_src, attr_trg) -> dict:
         cfg = self.cfg
         self.opt_D.zero_grad(set_to_none=True)
         with self._autocast():
             src_real, cls_real = self.D(x_clean)
             with torch.no_grad():
-                x_fake = self.G(x_blur, attr_trg)
+                x_fake = self.G(x_in, attr_trg)
             src_fake, _ = self.D(x_fake.detach())
             l_adv = adv_d_loss(src_real, src_fake)
             l_cls = cls_loss_real(cls_real, attr_src)
@@ -448,18 +468,18 @@ class Trainer:
             "D/tot": float(l_D.item()),
         }
 
-    def _step_G(self, x_blur, x_clean, attr_src, attr_trg) -> dict:
+    def _step_G(self, x_in, x_clean, attr_src, attr_trg) -> dict:
         cfg = self.cfg
         self.opt_G.zero_grad(set_to_none=True)
         lambda_id_eff = self._lambda_id_effective()
         with self._autocast():
-            x_fake = self.G(x_blur, attr_trg)
+            x_fake = self.G(x_in, attr_trg)
             x_rec  = self.G(x_fake, attr_src)    # cycle back to source attribute
             src_fake, cls_fake = self.D(x_fake)
 
             l_adv  = adv_g_loss(src_fake)
             l_cls  = cls_loss_fake(cls_fake, attr_trg)
-            l_rec  = cycle_loss(x_rec, x_blur)   # cycle target = blurred input (stays sharp via perc)
+            l_rec  = cycle_loss(x_rec, x_clean)
             l_id   = self.face_loss(x_fake, x_clean)
             l_perc = self.perc_loss(x_fake, x_clean)
             l_G = (
@@ -510,15 +530,15 @@ class Trainer:
             for batch_idx, batch in enumerate(iterator):
                 if max_batches is not None and batch_idx >= max_batches:
                     break
-                x_blur   = self._to_device(batch["blurred"])
+                x_in     = self._to_device(batch["image"])
                 x_clean  = self._to_device(batch["clean"])
                 attr_src = batch["attr"].to(cfg.device, non_blocking=cfg.non_blocking_transfer)
                 attr_trg = self._random_target_attr(attr_src)
 
                 with self._autocast():
-                    x_fake = self.G(x_blur, attr_trg)
+                    x_fake = self.G(x_in, attr_trg)
                     x_rec  = self.G(x_fake, attr_src)
-                    l_rec  = cycle_loss(x_rec, x_blur)
+                    l_rec  = cycle_loss(x_rec, x_clean)
                     l_id   = self.face_loss(x_fake, x_clean)
                     l_perc = self.perc_loss(x_fake, x_clean)
 
@@ -602,13 +622,13 @@ class Trainer:
             for batch_idx, batch in enumerate(iterator):
                 if max_batches is not None and batch_idx >= max_batches:
                     break
-                x_blur   = self._to_device(batch["blurred"])
+                x_in     = self._to_device(batch["image"])
                 x_clean  = self._to_device(batch["clean"])
                 attr_src = batch["attr"].to(cfg.device, non_blocking=cfg.non_blocking_transfer)
                 attr_trg = self._random_target_attr(attr_src)
 
                 with self._autocast():
-                    x_fake = self.G(x_blur, attr_trg)
+                    x_fake = self.G(x_in, attr_trg)
 
                 # FID/IS/KID use normalize=True → expects float [0, 1]
                 real_f = to_float01(x_clean)
@@ -729,21 +749,21 @@ class Trainer:
     # ── Cycle-consistency visualisation ───────────────────────────────────────
 
     def visualize_cycle_consistency(self, ckpt_path: str):
-        """Grid: [Clean | Blur | G(blur→attrB) | G(fake→attrA)] — 4 columns × 4 rows."""
+        """Grid: [Input | Target-ref | G(input→attrB) | G(fake→attrA)] — 4 columns × 4 rows."""
         self.G.eval()
         n_show   = 4
         batch    = next(iter(self.test_loader))
         x_clean  = self._to_device(batch["clean"][:n_show])
-        x_blur   = self._to_device(batch["blurred"][:n_show])
+        x_in     = self._to_device(batch["image"][:n_show])
         attr_src = batch["attr"][:n_show].to(self.cfg.device, non_blocking=self.cfg.non_blocking_transfer)
         attr_trg = self._random_target_attr(attr_src)
 
         with torch.no_grad():
             with self._autocast():
-                x_fake    = self.G(x_blur, attr_trg)
+                x_fake    = self.G(x_in, attr_trg)
                 x_reconst = self.G(x_fake, attr_src)
 
-        imgs = [denorm(x_clean), denorm(x_blur), denorm(x_fake), denorm(x_reconst)]
+        imgs = [denorm(x_in), denorm(x_clean), denorm(x_fake), denorm(x_reconst)]
         grid = vutils.make_grid(torch.cat(imgs, dim=0), nrow=n_show, padding=2)
         out_path = os.path.join(
             self.cfg.sample_dir, f"cycle_check_{os.path.basename(ckpt_path)}.png"
@@ -762,7 +782,7 @@ class Trainer:
         print(f"\n[overfit] samples={n_samples}, steps={n_steps}")
 
         fixed_batch = next(iter(self.train_loader))
-        x_blur   = self._to_device(fixed_batch["blurred"][:n_samples])
+        x_in     = self._to_device(fixed_batch["image"][:n_samples])
         x_clean  = self._to_device(fixed_batch["clean"][:n_samples])
         attr_src = fixed_batch["attr"][:n_samples].to(cfg.device, non_blocking=cfg.non_blocking_transfer)
         attr_trg = self._random_target_attr(attr_src)
@@ -771,10 +791,10 @@ class Trainer:
         self.D.train()
 
         with torch.no_grad():
-            x_f0 = self.G(x_blur, attr_trg)
+            x_f0 = self.G(x_in, attr_trg)
             x_r0 = self.G(x_f0, attr_src)
             init = {
-                "rec":  float(cycle_loss(x_r0, x_blur).item()),
+                "rec":  float(cycle_loss(x_r0, x_clean).item()),
                 "id":   float(self.face_loss(x_f0, x_clean).item()),
                 "perc": float(self.perc_loss(x_f0, x_clean).item()),
                 "psnr": float(batch_psnr(x_f0, x_clean).mean().item()),
@@ -785,14 +805,14 @@ class Trainer:
         step_iter = tqdm(range(1, n_steps + 1), desc="Overfit", leave=False) if cfg.use_tqdm else range(1, n_steps + 1)
 
         for step in step_iter:
-            log_D = self._step_D(x_blur, x_clean, attr_src, attr_trg)
-            log_G = self._step_G(x_blur, x_clean, attr_src, attr_trg)
+            log_D = self._step_D(x_in, x_clean, attr_src, attr_trg)
+            log_G = self._step_G(x_in, x_clean, attr_src, attr_trg)
 
             if step % print_every == 0 or step == 1 or step == n_steps:
                 with torch.no_grad():
-                    xf   = self.G(x_blur, attr_trg)
+                    xf   = self.G(x_in, attr_trg)
                     xr   = self.G(xf, attr_src)
-                    rec_ = float(cycle_loss(xr, x_blur).item())
+                    rec_ = float(cycle_loss(xr, x_clean).item())
                     id_  = float(self.face_loss(xf, x_clean).item())
                     pc_  = float(self.perc_loss(xf, x_clean).item())
                     ps_  = float(batch_psnr(xf, x_clean).mean().item())
@@ -811,16 +831,16 @@ class Trainer:
             )
 
         with torch.no_grad():
-            xff = self.G(x_blur, attr_trg)
+            xff = self.G(x_in, attr_trg)
             xrf = self.G(xff, attr_src)
             final = {
-                "rec":  float(cycle_loss(xrf, x_blur).item()),
+                "rec":  float(cycle_loss(xrf, x_clean).item()),
                 "id":   float(self.face_loss(xff, x_clean).item()),
                 "perc": float(self.perc_loss(xff, x_clean).item()),
                 "psnr": float(batch_psnr(xff, x_clean).mean().item()),
             }
             grid = vutils.make_grid(
-                torch.cat([denorm(x_blur), denorm(x_clean), denorm(xff)], dim=0),
+                torch.cat([denorm(x_in), denorm(x_clean), denorm(xff)], dim=0),
                 nrow=n_samples, padding=2,
             )
             sample_path = os.path.join(cfg.sample_dir, "overfit_result.png")
@@ -873,7 +893,7 @@ class Trainer:
         t0          = time.time()
 
         fixed_batch = next(iter(self.val_loader))
-        fx_blur     = self._to_device(fixed_batch["blurred"])
+        fx_in       = self._to_device(fixed_batch["image"])
         fx_clean    = self._to_device(fixed_batch["clean"])
 
         for epoch in range(self.start_epoch, cfg.num_epochs):
@@ -900,17 +920,17 @@ class Trainer:
             )
 
             for batch_idx, batch in enumerate(epoch_loader):
-                x_blur   = self._to_device(batch["blurred"])
+                x_in     = self._to_device(batch["image"])
                 x_clean  = self._to_device(batch["clean"])
                 attr_src = batch["attr"].to(cfg.device, non_blocking=cfg.non_blocking_transfer)
                 attr_trg = self._random_target_attr(attr_src)
 
-                log_D = self._step_D(x_blur, x_clean, attr_src, attr_trg)
+                log_D = self._step_D(x_in, x_clean, attr_src, attr_trg)
                 self.global_step += 1
                 d_step_idx       += 1
 
                 if self.global_step % cfg.n_critic == 0:
-                    log_G = self._step_G(x_blur, x_clean, attr_src, attr_trg)
+                    log_G = self._step_G(x_in, x_clean, attr_src, attr_trg)
 
                     g_step_idx += 1
                     linear_lr_decay(
@@ -960,7 +980,7 @@ class Trainer:
                 # Exactly N sample dumps per epoch (default N=5)
                 if sample_idx < len(sample_points) and progress_step >= sample_points[sample_idx]:
                     sp = os.path.join(cfg.sample_dir, f"ep{epoch+1:02d}_q{sample_idx+1}_step_{d_step_idx:06d}.png")
-                    grid = save_sample_grid(self.G, fx_blur, fx_clean, self.fixed_attrs, sp, cfg.device)
+                    grid = save_sample_grid(self.G, fx_in, fx_clean, self.fixed_attrs, sp, cfg.device)
                     print(f"  [sample] ep={epoch+1:02d} part={sample_idx+1}/{len(sample_points)} → {sp}")
                     if getattr(cfg, "live_preview", False):
                         show_latest_sample(sp)

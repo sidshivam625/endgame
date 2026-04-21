@@ -95,10 +95,10 @@ import shutil
 
 CODE_ROOT = "/kaggle/input/stargan-cid"
 WORK_ROOT = "/kaggle/working/endgame"
-DATA_ROOT = "/kaggle/input/datasets/jessicali9530/celeba-dataset"
+DATA_ROOT = "/kaggle/input/datasets/shuvoalok/raf-db-dataset"
 
 os.environ["STARGAN_WORK_ROOT"] = WORK_ROOT
-os.environ["STARGAN_CELEBA_ROOT"] = DATA_ROOT
+os.environ["STARGAN_DATA_ROOT"] = DATA_ROOT
 
 os.makedirs(WORK_ROOT, exist_ok=True)
 
@@ -109,7 +109,6 @@ for filename in [
     "losses.py",
     "trainer.py",
     "train.py",
-    "check_blur.py",
     "generate_visuals.py",
     "requirements.txt",
 ]:
@@ -128,7 +127,7 @@ from config import Config
 cfg = Config()
 print("GPU:", torch.cuda.get_device_name(0))
 print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
-print("CelebA root:", cfg.celeba_root)
+print("Data root:", cfg.data_root)
 print("Image dir:", cfg.image_dir)
 print("Attr file:", cfg.attr_path)
 print("Sample dir:", cfg.sample_dir)
@@ -138,12 +137,7 @@ print("Save dir:", cfg.save_dir)
 import wandb
 # wandb.login(key="YOUR_WANDB_KEY")
 
-### Cell 5 – Blur sanity check
-from check_blur import visualize_blur
-
-visualize_blur(num_samples=4, split="train")
-
-### Cell 6 – Quick model sanity check
+### Cell 5 – Quick model sanity check
 from models import Generator, Discriminator, count_params
 
 G = Generator(image_size=cfg.image_size, n_attrs=cfg.n_attrs, conv_dim=cfg.g_conv_dim, repeat_num=cfg.g_repeat_num).cuda()
@@ -154,7 +148,7 @@ x = torch.randn(2, 3, cfg.image_size, cfg.image_size).cuda()
 a = torch.zeros(2, cfg.n_attrs).cuda()
 print("Generator output shape:", G(x, a).shape)
 
-### Cell 7 – Tiny overfit sanity check
+### Cell 6 – Tiny overfit sanity check
 from trainer import Trainer
 
 cfg = Config()
@@ -163,7 +157,7 @@ cfg.live_preview = False
 trainer = Trainer(cfg)
 trainer.overfit_sanity(n_samples=8, n_steps=300)
 
-### Cell 8 – Train (save + W&B log samples, no inline preview)
+### Cell 7 – Train (save + W&B log samples, no inline preview)
 from trainer import Trainer
 
 cfg = Config()
@@ -173,7 +167,7 @@ cfg.wandb_mode = "online"
 trainer = Trainer(cfg)
 trainer.train()
 
-### Cell 9 – Inspect checkpoints and latest training outputs
+### Cell 8 – Inspect checkpoints and latest training outputs
 import glob
 from IPython.display import Image, display
 
@@ -189,14 +183,14 @@ latest_sample = sorted(glob.glob(os.path.join(cfg.sample_dir, "*.png")))
 if latest_sample:
     display(Image(filename=latest_sample[-1]))
 
-### Cell 10 – Evaluate a checkpoint on the test split
+### Cell 9 – Evaluate a checkpoint on the test split
 from trainer import Trainer
 
 cfg = Config()
 trainer = Trainer(cfg)
 trainer.evaluate_test_checkpoint(os.path.join(cfg.save_dir, "ckpt_best_psnr.pth"))
 
-### Cell 11 – Evaluate all key checkpoints
+### Cell 10 – Evaluate all key checkpoints
 from trainer import Trainer
 
 cfg = Config()
@@ -213,7 +207,7 @@ for ckpt_name in [
         print("\nEvaluating", ckpt_path)
         trainer.evaluate_test_checkpoint(ckpt_path)
 
-### Cell 12 – Generate paper-quality visual comparison from a checkpoint
+### Cell 11 – Generate paper-quality visual comparison from a checkpoint
 from generate_visuals import generate_paper_visuals
 
 generate_paper_visuals(
