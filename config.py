@@ -94,8 +94,8 @@ class Config:
     lambda_adv   = 1.0          # adversarial
     lambda_cls   = 1.0          # attribute classification
     lambda_rec   = 10.0         # cycle-reconstruction (L1)
-    lambda_id    = 5.0          # contrastive identity (FaceNet embedding)
-    lambda_perc  = 0.5          # perceptual (VGG feature matching)
+    lambda_id    = 0.0         # contrastive identity (FaceNet embedding)
+    lambda_perc  = 0.0         # perceptual (VGG feature matching)
     lambda_gp    = 10.0         # WGAN gradient penalty
 
     # Identity-loss warmup: reduces early over-constraint on attribute changes.
