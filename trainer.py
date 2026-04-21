@@ -54,6 +54,12 @@ try:
 except ImportError:
     wandb = None
 
+try:
+    from IPython.display import display, Image as IPythonImage
+except ImportError:
+    display = None
+    IPythonImage = None
+
 # ── Optional: torchmetrics for GAN evaluation metrics ─────────────────────────
 try:
     from torchmetrics.image import (
@@ -182,6 +188,11 @@ def save_sample_grid(
     if was_training:
         G.train()
     return grid
+
+
+def show_latest_sample(path: str):
+    if display is not None and IPythonImage is not None and os.path.isfile(path):
+        display(IPythonImage(filename=path))
 
 
 def linear_lr_decay(
@@ -864,6 +875,8 @@ class Trainer:
                         sp = os.path.join(cfg.sample_dir, f"step_{d_step_idx:06d}.png")
                         grid = save_sample_grid(self.G, fx_blur, fx_clean, self.fixed_attrs, sp, cfg.device)
                         print(f"  [sample] → {sp}")
+                        if getattr(cfg, "live_preview", False):
+                            show_latest_sample(sp)
                         if self.wandb_run is not None:
                             self._log_wandb({"samples/grid": wandb.Image(grid)}, step=d_step_idx)
 

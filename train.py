@@ -37,6 +37,7 @@ def main():
     parser.add_argument("--batch-size", type=int, default=None)
     parser.add_argument("--overfit-steps", type=int, default=300)
     parser.add_argument("--overfit-samples", type=int, default=8)
+    parser.add_argument("--no-live-preview", action="store_true")
     parser.add_argument("--disable-wandb", action="store_true")
     args = parser.parse_args()
 
@@ -51,6 +52,8 @@ def main():
         cfg.batch_size = args.batch_size
     if args.disable_wandb:
         cfg.use_wandb = False
+    if args.no_live_preview:
+        cfg.live_preview = False
     if args.checkpoint:
         cfg.resume_ckpt = args.checkpoint
 
@@ -83,64 +86,139 @@ if __name__ == "__main__":
 # KAGGLE NOTEBOOK  – copy these cells top-to-bottom
 # ─────────────────────────────────────────────────────────────────────────────
 """
-### Cell 1 – Install
-!pip install facenet-pytorch wandb --quiet
+### Cell 1 – Install dependencies
+!pip install -q -r /kaggle/input/stargan-cid/requirements.txt
 
-### Cell 2 – Verify GPU
+### Cell 2 – Set up workspace and copy project files
+import os
+import shutil
+
+CODE_ROOT = "/kaggle/input/stargan-cid"
+WORK_ROOT = "/kaggle/working/endgame"
+DATA_ROOT = "/kaggle/input/datasets/jessicali9530/celeba-dataset"
+
+os.environ["STARGAN_WORK_ROOT"] = WORK_ROOT
+os.environ["STARGAN_CELEBA_ROOT"] = DATA_ROOT
+
+os.makedirs(WORK_ROOT, exist_ok=True)
+
+for filename in [
+    "config.py",
+    "dataset.py",
+    "models.py",
+    "losses.py",
+    "trainer.py",
+    "train.py",
+    "check_blur.py",
+    "generate_visuals.py",
+    "requirements.txt",
+]:
+    source_path = os.path.join(CODE_ROOT, filename)
+    if os.path.exists(source_path):
+        shutil.copy(source_path, os.path.join(WORK_ROOT, filename))
+
+os.chdir(WORK_ROOT)
+print("Working directory:", os.getcwd())
+print("Dataset root:", DATA_ROOT)
+
+### Cell 3 – Verify GPU and dataset paths
 import torch
-print(torch.cuda.get_device_name(0))
-print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory/1e9:.1f} GB")
+from config import Config
 
-### Cell 2b – W&B login (optional)
+cfg = Config()
+print("GPU:", torch.cuda.get_device_name(0))
+print(f"VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+print("CelebA root:", cfg.celeba_root)
+print("Image dir:", cfg.image_dir)
+print("Attr file:", cfg.attr_path)
+print("Sample dir:", cfg.sample_dir)
+print("Save dir:", cfg.save_dir)
+
+### Cell 4 – Optional W&B login
 import wandb
 # wandb.login(key="YOUR_WANDB_KEY")
 
-### Cell 3 – Clone / upload project files
-# If running from Kaggle dataset, copy files from /kaggle/input/your-code-dataset/
-import shutil, os
-for f in ["config.py","dataset.py","models.py","losses.py","trainer.py","train.py"]:
-    shutil.copy(f"/kaggle/input/stargan-cid/{f}", f"/kaggle/working/{f}")
-os.chdir("/kaggle/working")
+### Cell 5 – Blur sanity check
+from check_blur import visualize_blur
 
-### Cell 4 – Quick sanity-check (optional)
+visualize_blur(num_samples=4, split="train")
+
+### Cell 6 – Quick model sanity check
 from models import Generator, Discriminator, count_params
-import torch
-G = Generator(128, 5).cuda()
-D = Discriminator(128, 5).cuda()
+
+G = Generator(image_size=cfg.image_size, n_attrs=cfg.n_attrs, conv_dim=cfg.g_conv_dim, repeat_num=cfg.g_repeat_num).cuda()
+D = Discriminator(image_size=cfg.image_size, n_attrs=cfg.n_attrs, conv_dim=cfg.d_conv_dim, repeat_num=cfg.d_repeat_num).cuda()
 count_params(G, "G")
 count_params(D, "D")
-x = torch.randn(2,3,128,128).cuda()
-a = torch.zeros(2,5).cuda()
-print(G(x,a).shape)
+x = torch.randn(2, 3, cfg.image_size, cfg.image_size).cuda()
+a = torch.zeros(2, cfg.n_attrs).cuda()
+print("Generator output shape:", G(x, a).shape)
 
-### Cell 5 – Train
-from config  import Config
-from trainer import Trainer
-
-cfg = Config()
-trainer = Trainer(cfg)
-trainer.train()
-
-### Cell 6 – Test from any checkpoint
-from config import Config
-from trainer import Trainer
-
-cfg = Config()
-trainer = Trainer(cfg)
-trainer.evaluate_test_checkpoint("/kaggle/working/checkpoints/ckpt_ep10.pth")
-
-### Cell 7 – Visualise final samples
-from IPython.display import Image
-import os
-samples = sorted(os.listdir(cfg.sample_dir))
-Image(os.path.join(cfg.sample_dir, samples[-1]))
-
-### Cell 8 – Tiny overfit sanity check (quick debug)
-from config import Config
+### Cell 7 – Tiny overfit sanity check
 from trainer import Trainer
 
 cfg = Config()
 cfg.use_wandb = False
+cfg.live_preview = True
 trainer = Trainer(cfg)
 trainer.overfit_sanity(n_samples=8, n_steps=300)
+
+### Cell 8 – Train with live sample previews
+from trainer import Trainer
+
+cfg = Config()
+cfg.live_preview = True
+cfg.use_wandb = True
+cfg.wandb_mode = "online"
+trainer = Trainer(cfg)
+trainer.train()
+
+### Cell 9 – Inspect checkpoints and latest training outputs
+import glob
+from IPython.display import Image, display
+
+print("Checkpoints:")
+for path in sorted(glob.glob(os.path.join(cfg.save_dir, "*.pth"))):
+    print(" -", os.path.basename(path))
+
+print("Latest samples:")
+for path in sorted(glob.glob(os.path.join(cfg.sample_dir, "*.png")))[-5:]:
+    print(" -", os.path.basename(path))
+
+latest_sample = sorted(glob.glob(os.path.join(cfg.sample_dir, "*.png")))
+if latest_sample:
+    display(Image(filename=latest_sample[-1]))
+
+### Cell 10 – Evaluate a checkpoint on the test split
+from trainer import Trainer
+
+cfg = Config()
+trainer = Trainer(cfg)
+trainer.evaluate_test_checkpoint(os.path.join(cfg.save_dir, "ckpt_best_psnr.pth"))
+
+### Cell 11 – Evaluate all key checkpoints
+from trainer import Trainer
+
+cfg = Config()
+trainer = Trainer(cfg)
+
+for ckpt_name in [
+    "ckpt_best_psnr.pth",
+    "ckpt_best_fid.pth",
+    "ckpt_best_lpips.pth",
+    "ckpt_final.pth",
+]:
+    ckpt_path = os.path.join(cfg.save_dir, ckpt_name)
+    if os.path.exists(ckpt_path):
+        print("\nEvaluating", ckpt_path)
+        trainer.evaluate_test_checkpoint(ckpt_path)
+
+### Cell 12 – Generate paper-quality visual comparison from a checkpoint
+from generate_visuals import generate_paper_visuals
+
+generate_paper_visuals(
+    checkpoint_path=os.path.join(cfg.save_dir, "ckpt_best_psnr.pth"),
+    num_samples=5,
+    split="test",
+)
 """

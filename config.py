@@ -122,6 +122,8 @@ class Config:
 
     log_step     = 50           # print loss every N D-steps
     sample_step  = 500          # save sample grid every N D-steps
+    # Show the latest sample grid live in notebook environments when a sample is saved.
+    live_preview  = True
     save_step    = 2000         # checkpoint every N D-steps
 
     resume_ckpt  = None         # path to checkpoint to resume from (or None)
