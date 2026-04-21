@@ -21,9 +21,21 @@ from config import Config
 from dataset import build_dataloaders
 
 
-def visualize_blur(num_samples: int = 4, split: str = "train"):
+def visualize_blur(
+    num_samples: int = 4,
+    split: str = "train",
+    blur_kernel: int | None = None,
+    blur_sigma_lo: float | None = None,
+    blur_sigma_hi: float | None = None,
+):
     cfg = Config()
     cfg.batch_size = num_samples
+    if blur_kernel is not None:
+        cfg.blur_kernel = int(blur_kernel)
+    if blur_sigma_lo is not None:
+        cfg.blur_sigma_lo = float(blur_sigma_lo)
+    if blur_sigma_hi is not None:
+        cfg.blur_sigma_hi = float(blur_sigma_hi)
 
     print(f"Loading dataset from: {cfg.celeba_root}")
     try:
@@ -49,6 +61,8 @@ def visualize_blur(num_samples: int = 4, split: str = "train"):
         f"kernel={cfg.blur_kernel}",
         fontsize=12, fontweight="bold",
     )
+    if cfg.blur_sigma_hi <= 0 or cfg.blur_kernel < 3:
+        print("[blur-check] Blur is disabled by config (sigma<=0 or kernel<3).")
     attr_names = cfg.selected_attrs
 
     for i in range(num_samples):
@@ -83,5 +97,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Check blur augmentation visually")
     parser.add_argument("--samples", type=int, default=4,     help="Number of samples to show")
     parser.add_argument("--split",   type=str, default="train", choices=["train", "val", "test"])
+    parser.add_argument("--blur-kernel", type=int, default=None, help="Override blur kernel size")
+    parser.add_argument("--blur-sigma-lo", type=float, default=None, help="Override lower sigma")
+    parser.add_argument("--blur-sigma-hi", type=float, default=None, help="Override upper sigma")
     args = parser.parse_args()
-    visualize_blur(args.samples, args.split)
+    visualize_blur(
+        num_samples=args.samples,
+        split=args.split,
+        blur_kernel=args.blur_kernel,
+        blur_sigma_lo=args.blur_sigma_lo,
+        blur_sigma_hi=args.blur_sigma_hi,
+    )

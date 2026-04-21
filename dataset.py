@@ -33,6 +33,10 @@ def gaussian_blur(img_tensor: torch.Tensor, kernel_size: int, sigma: float) -> t
     Apply Gaussian blur to a CHW tensor in [-1, 1].
     Uses torchvision's functional gaussian_blur (available since 0.9).
     """
+    # Explicitly disable blur for non-positive sigma or tiny/invalid kernels.
+    if sigma <= 0.0 or kernel_size < 3:
+        return img_tensor
+
     # torchvision expects uint8 or float32 in [0, 1] — work in float32 directly
     # Shift to [0, 1] for the operation then shift back
     x = (img_tensor + 1.0) / 2.0                          # [-1,1] → [0,1]
@@ -71,6 +75,10 @@ class CelebABlurDataset(Dataset):
         self.blur_sigma_lo = blur_sigma_lo
         self.blur_sigma_hi = blur_sigma_hi
         self.augment      = augment
+
+        # Keep kernel valid and odd if blur is enabled.
+        if self.blur_kernel >= 3 and self.blur_kernel % 2 == 0:
+            self.blur_kernel += 1
 
         # ── Load attribute CSV ─────────────────────────────────────────────
         df = pd.read_csv(attr_path)
@@ -121,8 +129,11 @@ class CelebABlurDataset(Dataset):
         clean = self.base_transform(img)   # (3, H, W) ∈ [-1, 1]
 
         # ── Apply random Gaussian blur ─────────────────────────────────────
-        sigma   = random.uniform(self.blur_sigma_lo, self.blur_sigma_hi)
-        blurred = gaussian_blur(clean.clone(), self.blur_kernel, sigma)
+        if self.blur_sigma_hi <= 0.0 or self.blur_kernel < 3:
+            blurred = clean.clone()
+        else:
+            sigma = random.uniform(max(self.blur_sigma_lo, 0.0), self.blur_sigma_hi)
+            blurred = gaussian_blur(clean.clone(), self.blur_kernel, sigma)
 
         # ── Attribute vector ───────────────────────────────────────────────
         attr = torch.tensor(
