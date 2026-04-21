@@ -204,11 +204,19 @@ def _resolve_rafdb_paths(cfg):
 
     folder_train_candidates = [
         os.path.join(root, "dataset", "train"),
+        os.path.join(root, "DATASET", "train"),
+        os.path.join(root, "Dataset", "train"),
         os.path.join(root, "train"),
+        os.path.join(root, "RAF-DB", "dataset", "train"),
+        os.path.join(root, "RAF-DB", "DATASET", "train"),
     ]
     folder_test_candidates = [
         os.path.join(root, "dataset", "test"),
+        os.path.join(root, "DATASET", "test"),
+        os.path.join(root, "Dataset", "test"),
         os.path.join(root, "test"),
+        os.path.join(root, "RAF-DB", "dataset", "test"),
+        os.path.join(root, "RAF-DB", "DATASET", "test"),
     ]
 
     image_dir = next((p for p in image_candidates if os.path.isdir(p)), None)
