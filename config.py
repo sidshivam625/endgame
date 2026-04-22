@@ -71,7 +71,7 @@ class Config:
 
     # ── Training schedule ─────────────────────────────────────────────────────
     batch_size   = 32
-    num_epochs   = 60
+    num_epochs   = 100
     n_critic     = 5            # discriminator updates per generator update
     lr_g         = 1e-4
     lr_d         = 1e-4
